@@ -1,7 +1,12 @@
 from enum import Enum
 from javalang.javalang.tree import LocalVariableDeclaration
+from collections import Counter
 
 
+# ArgGC - property of argument that passed to the method
+# not_sure - can't say anything about such argument
+# does_change - method affects the argument gc state
+# does_not_change - method doesn't affect gc state of the passed object
 class ArgGC(Enum):
     not_sure = 0,
     pass_forward = -1
@@ -14,6 +19,7 @@ class ClassInfo:
         self.name = class_obj.name
         # name -> methodInfo
         self.methods = dict()
+        self.constructors = []
         self.parent = parent
         # name -> type
         self.fields = dict()
@@ -42,15 +48,21 @@ class ClassInfo:
 
     def init_methods(self, methods):
         for method in methods:
-            method_info = MethodInfo(method)
+            method_info = StandAloneMethodInfo(method)
             scope = Scope(self)
             method_info.attach_scope(scope)
             self.add_method(method_info)
 
+    def init_constructors(self, constructors):
+        for constructor in constructors:
+            constructor_info = ClassConstructorInfo(constructor)
+            scope = Scope(self)
+            constructor_info.attach_scope(scope)
+            self.constructors.append(constructor_info)
+
 
 class MethodInfo:
     def __init__(self, method_obj):
-        self.title = method_obj.name
         self.input_params = [(param.name, param.type.name) for param in method_obj.parameters]
         self.input_param_table = dict()
         self.scope = None
@@ -69,13 +81,14 @@ class MethodInfo:
         if param is not None:
             self.input_param_table[param_name] = new_gc
         else:
-            print("There is no param", param_name, "in method", self.title)
+            print("There is no param", param_name, "in method")
 
     def get_gc(self, param_name):
         return self.input_param_table[param_name]
 
     def attach_scope(self, scope):
         self.scope = scope
+        scope.set_method_info(self)
 
     def does_change_gc(self, var):
         return self.input_param_table[var]
@@ -92,32 +105,26 @@ class MethodInfo:
             for declarator in declaration.declarators:
                 self.local_variables[declarator.name] = var_type
 
-    # returns type of the local variable if there is variable with such name
+    # returns type (static) of the local variable if there is variable with such name
     # otherwise return None
     def get_type_of_local_variable(self, var_name):
         return self.local_variables.get(var_name, None)
 
 
-class Scope:
-    def __init__(self, this, parent=None):
-        self.local_variables = dict()
-        self.parent = parent
-        self.this = this
+class StandAloneMethodInfo(MethodInfo):
+    def __init__(self, method_obj):
+        super().__init__(method_obj)
+        self.title = method_obj.name
 
-    def add_local_variable(self, var):
-        self.local_variables[var.name] = var
 
-    def get_local_variable(self, var_name):
-        variable = self.local_variables.get(var_name, None)
-        if variable:
-            return variable
-        elif self.parent:
-            return self.parent.get_local_variable(var_name)
-        else:
-            return None
+class ClassConstructorInfo(MethodInfo):
+    def __init__(self, method_obj):
+        super().__init__(method_obj)
 
-    def get_parent(self):
-        return self.parent
+    def get_fields_to_init(self):
+        re
+
+
 
 
 class VariableAlias:
@@ -141,17 +148,27 @@ class VariableAlias:
 class Object:
     _id = 1
 
-    def __init__(self):
+    def __init__(self, heap):
         self.ref_counter = 0
         self.id = Object._id
-        self.refers = []
+        self.fields = dict()
         Object._id += 1
+        self.heap = heap
+        self.dynamic_type = None
 
-    def add_refer(self, obj):
-        self.refers.append(obj)
+    def set_field(self, field_name: str, obj: "Object"):
+        self.fields[field_name] = obj
+        obj.ref()
 
-    def remove_refer(self, obj):
-        self.refers = filter(lambda o: o != obj, self.refers)
+    def get_field_object(self, obj_path: list):
+        if len(obj_path) == 0:
+            return self
+        if self.fields[obj_path[0]]:
+            return self.get_field_object(obj_path[1:])
+
+    def unset_field(self, field_name: str):
+        self.fields[field_name].unref()
+        self.fields[field_name] = None
 
     def ref(self):
         self.ref_counter += 1
@@ -159,9 +176,13 @@ class Object:
     def unref(self):
         self.ref_counter -= 1
         if self.ref_counter < 0:
-            raise Exception("Somehow ref counter is less than 0")
+            raise Exception("Object:Somehow ref counter is less than 0")
         elif self.ref_counter == 0:
             print("Object with id {} could be deleted".format(self.id))
+            self.heap.remove_object(self)
+
+    def set_dynamic_type(self, dynamic_type: str):
+        self.dynamic_type = dynamic_type
 
 
 class Heap:
@@ -174,7 +195,7 @@ class Heap:
         Heap.pool = without_garbage
 
     def allocate_object(self):
-        obj = Object()
+        obj = Object(self)
         self.pool.add(obj)
         return obj
 
@@ -182,4 +203,43 @@ class Heap:
         for obj in self.pool:
             print("id = {}, ref_counter = {}".format(obj.id, obj.ref_counter))
 
+    def remove_object(self, obj):
+        for child_obj in obj:
+            # remove chile objects
+            pass
+        self.pool.remove(obj)
+
+
+class Scope:
+    def __init__(self, this, parent=None):
+        self.local_variables = dict()
+        self.parent = parent
+        self.this = this
+        self.method_info = None
+
+    def add_local_variable(self, var):
+        self.local_variables[var.name] = var
+
+    def get_local_variable(self, var_name) -> VariableAlias:
+        variable = self.local_variables.get(var_name, None)
+        if variable:
+            return variable
+        elif self.parent:
+            return self.parent.get_local_variable(var_name)
+        else:
+            return None
+
+    def remove_variables_from_the_scope(self):
+        for var_name, var_alias in self.local_variables.items():
+            # delete objects from the scope
+            pass
+
+    def get_parent(self):
+        return self.parent
+
+    def set_method_info(self, method_info):
+        self.method_info = method_info
+
+    def get_method_info(self):
+        return self.method_info
 

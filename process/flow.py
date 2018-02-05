@@ -104,23 +104,24 @@ class FlowGraph:
         self.to_process.add(node.unit_id)
 
     def fill_methods_relations(self):
+        print("Filling method relations:")
         for unit_id, node in self.flow_nodes.items():
             method_invocations = node.get_method_invocations()
             method_info = node.class_ref.get_method(node.get_method_name())
-            print("Processing '{}':".format(unit_id))
+            print("   Processing '{}':".format(unit_id))
             for mi in method_invocations:
                 # object which is being called
                 qualifier = mi.qualifier
                 # method name actually
                 member = mi.member
 
-                print("  -+- {}".format(member))
+                print("     -+- {}".format(member))
                 object_type = TypesManager.get().determine_type(qualifier, method_info)
-                print("   |___ type of called object '{}'".format(object_type))
+                print("      |___ type of called object '{}'".format(object_type))
                 before_unit_id = ".".join([object_type, member])
                 node.add_before(before_unit_id)
                 self.get_unit(before_unit_id).add_after(unit_id)
-            print("'{}' finished\n".format(node.unit_id))
+            print("   '{}' finished\n".format(node.unit_id))
 
     def update_nodes_state(self):
         for unit_id, node in self.flow_nodes.items():

@@ -26,6 +26,8 @@ class TypesManager:
         # for method invocations like this.a
         # qualifier equals to None
         # !! could be buggy
+        # wrong logic, has to be rewritten
+        #
         if not qualifier:
             return method_info.scope.this.name
 
